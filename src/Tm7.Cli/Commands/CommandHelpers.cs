@@ -4,6 +4,8 @@ namespace Tm7.Cli.Commands;
 
 public static class CommandHelpers
 {
+    internal const string ParentBoundaryPropertyName = "Tm7.Cli.ParentBoundary";
+
     public static string? GetEntityName(SerializableTaggable entity)
     {
         if (entity.Properties is null) return null;
@@ -43,6 +45,36 @@ public static class CommandHelpers
             new SerializableBooleanDisplayAttribute("Out Of Scope", "71f3d9aa-b8ef-4e54-8126-607a1d903103", false),
             new SerializableStringDisplayAttribute("Reason For Out Of Scope", "752473b6-52d4-4776-9a24-202153f7d579", "")
         ];
+    }
+
+    internal static void SetLayoutParent(
+        SerializableTaggable entity,
+        Guid parentBoundaryGuid)
+    {
+        entity.Properties.RemoveAll(property =>
+            property is SerializableStringDisplayAttribute stringAttribute &&
+            stringAttribute.Name == ParentBoundaryPropertyName);
+        entity.Properties.Add(new SerializableStringDisplayAttribute(
+            "",
+            ParentBoundaryPropertyName,
+            parentBoundaryGuid.ToString()));
+    }
+
+    internal static Guid? GetLayoutParent(SerializableTaggable entity)
+    {
+        var value = entity.Properties
+            .OfType<SerializableStringDisplayAttribute>()
+            .FirstOrDefault(property => property.Name == ParentBoundaryPropertyName)
+            ?.Value
+            ?.ToString();
+        return Guid.TryParse(value, out var guid) ? guid : null;
+    }
+
+    internal static void ClearLayoutParent(SerializableTaggable entity)
+    {
+        entity.Properties.RemoveAll(property =>
+            property is SerializableStringDisplayAttribute stringAttribute &&
+            stringAttribute.Name == ParentBoundaryPropertyName);
     }
 
     public static List<SerializableDisplayAttribute> CreateFlowProperties(string name)

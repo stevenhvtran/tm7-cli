@@ -63,4 +63,24 @@ public abstract class SerializableLine : SerializableTaggable
         StrokeThickness = strokeThickness;
         StrokeDashArray = strokeDashArray;
     }
+
+    internal void SetGeometry(
+        int sourceX,
+        int sourceY,
+        int targetX,
+        int targetY,
+        int handleX,
+        int handleY,
+        StencilConnectionPort portSource,
+        StencilConnectionPort portTarget)
+    {
+        X0 = sourceX;
+        Y0 = sourceY;
+        X1 = targetX;
+        Y1 = targetY;
+        MPX = handleX;
+        MPY = handleY;
+        PortSource = portSource;
+        PortTarget = portTarget;
+    }
 }

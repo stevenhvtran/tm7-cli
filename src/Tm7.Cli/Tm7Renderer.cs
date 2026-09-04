@@ -1,5 +1,6 @@
 using Hex1b.Surfaces;
 using Hex1b.Theming;
+using Tm7.Cli.Layout;
 using Tm7.Cli.Model;
 
 namespace Tm7.Cli;
@@ -22,6 +23,7 @@ public sealed class Tm7Renderer
 
     // Track entity boxes in terminal space to avoid drawing lines through them
     private readonly List<(int left, int top, int right, int bottom)> _entityRects = [];
+    private readonly List<(int x, int y, char arrow)> _flowArrows = [];
 
     // Colors
     private static readonly Hex1bColor ProcessColor = Hex1bColor.Cyan;
@@ -48,6 +50,16 @@ public sealed class Tm7Renderer
     /// Render a tm7 model's first drawing surface to a terminal string.
     /// </summary>
     public static string Render(SerializableModelData model, int termWidth = 200, int termHeight = 55, bool plain = false)
+    {
+        return Render(model, termWidth, termHeight, plain, null);
+    }
+
+    internal static string Render(
+        SerializableModelData model,
+        int termWidth,
+        int termHeight,
+        bool plain,
+        IReadOnlyDictionary<Guid, IReadOnlyList<ModelRoutePoint>>? routes)
     {
         if (model.DrawingSurfaceList is null || model.DrawingSurfaceList.Count == 0)
             return "(no drawing surfaces)";
@@ -125,11 +137,15 @@ public sealed class Tm7Renderer
                     if (entityPositions.TryGetValue(conn.SourceGuid, out var src) &&
                         entityPositions.TryGetValue(conn.TargetGuid, out var tgt))
                     {
-                        renderer.DrawFlow(src, tgt);
+                        IReadOnlyList<ModelRoutePoint>? route = null;
+                        if (routes is not null)
+                            routes.TryGetValue(conn.Guid, out route);
+                        renderer.DrawFlow(src, tgt, route);
                     }
                 }
             }
         }
+        renderer.DrawFlowArrows();
 
         // Draw entities ON TOP of flows (so labels and borders are never obscured)
         foreach (var (border, name, type) in entityInfo)
@@ -314,7 +330,21 @@ public sealed class Tm7Renderer
 
     // ── flow drawing ────────────────────────────────────────────────────
 
-    private void DrawFlow(EntityRect src, EntityRect tgt)
+    private void DrawFlow(
+        EntityRect src,
+        EntityRect tgt,
+        IReadOnlyList<ModelRoutePoint>? modelRoute)
+    {
+        if (modelRoute is { Count: >= 2 })
+        {
+            DrawRoutedFlow(src, tgt, modelRoute);
+            return;
+        }
+
+        DrawFallbackFlow(src, tgt);
+    }
+
+    private void DrawFallbackFlow(EntityRect src, EntityRect tgt)
     {
         // Compute exit/entry points
         var (sx, sy) = GetEdgePoint(src, tgt.CenterX, tgt.CenterY);
@@ -336,7 +366,7 @@ public sealed class Tm7Renderer
                 DrawHSegment(midX, tx, ty);
 
             // Arrow at target
-            WriteChar(tx, ty, dx > 0 ? '►' : '◄', ArrowColor);
+            _flowArrows.Add((tx, ty, dx > 0 ? '►' : '◄'));
         }
         else
         {
@@ -350,7 +380,153 @@ public sealed class Tm7Renderer
                 DrawVSegment(tx, midY, ty);
 
             // Arrow at target
-            WriteChar(tx, ty, dy > 0 ? '▼' : '▲', ArrowColor);
+            _flowArrows.Add((tx, ty, dy > 0 ? '▼' : '▲'));
+        }
+    }
+
+    private void DrawRoutedFlow(
+        EntityRect src,
+        EntityRect tgt,
+        IReadOnlyList<ModelRoutePoint> modelRoute)
+    {
+        var points = modelRoute
+            .Select(point => (x: MapX(point.X), y: MapY(point.Y)))
+            .ToList();
+        points[0] = SnapToTerminalBorder(src, points[0]);
+        points[^1] = SnapToTerminalBorder(tgt, points[^1]);
+        AddEndpointElbows(points, src, tgt);
+
+        var simplified = new List<(int x, int y)>(points.Count);
+        foreach (var point in points)
+        {
+            if (simplified.Count == 0 || simplified[^1] != point)
+                simplified.Add(point);
+        }
+
+        if (simplified.Count < 2)
+        {
+            DrawFallbackFlow(src, tgt);
+            return;
+        }
+
+        for (var index = 0; index < simplified.Count - 1; index++)
+            DrawLineSegment(simplified[index], simplified[index + 1]);
+
+        var beforeTarget = simplified[^2];
+        var target = simplified[^1];
+        var deltaX = target.x - beforeTarget.x;
+        var deltaY = target.y - beforeTarget.y;
+        var arrow = Math.Abs(deltaX) >= Math.Abs(deltaY)
+            ? (deltaX >= 0 ? '►' : '◄')
+            : (deltaY >= 0 ? '▼' : '▲');
+        _flowArrows.Add((target.x, target.y, arrow));
+    }
+
+    private void DrawFlowArrows()
+    {
+        foreach (var (x, y, arrow) in _flowArrows)
+            WriteChar(x, y, arrow, ArrowColor);
+    }
+
+    private static void AddEndpointElbows(
+        List<(int x, int y)> points,
+        EntityRect source,
+        EntityRect target)
+    {
+        if (points.Count < 2)
+            return;
+
+        if (points[0].x != points[1].x && points[0].y != points[1].y)
+        {
+            var sourceExitsHorizontally =
+                points[0].x == source.Left - 1 ||
+                points[0].x == source.Right + 1;
+            points.Insert(
+                1,
+                sourceExitsHorizontally
+                    ? (points[1].x, points[0].y)
+                    : (points[0].x, points[1].y));
+        }
+
+        var previousIndex = points.Count - 2;
+        if (points[previousIndex].x != points[^1].x &&
+            points[previousIndex].y != points[^1].y)
+        {
+            var targetEntersHorizontally =
+                points[^1].x == target.Left - 1 ||
+                points[^1].x == target.Right + 1;
+            points.Insert(
+                points.Count - 1,
+                targetEntersHorizontally
+                    ? (points[previousIndex].x, points[^1].y)
+                    : (points[^1].x, points[previousIndex].y));
+        }
+    }
+
+    private static (int x, int y) SnapToTerminalBorder(
+        EntityRect entity,
+        (int x, int y) point)
+    {
+        var left = entity.Left - 1;
+        var right = entity.Right + 1;
+        var top = entity.Top - 1;
+        var bottom = entity.Bottom + 1;
+        var leftDistance = Math.Abs(point.x - left);
+        var rightDistance = Math.Abs(point.x - right);
+        var topDistance = Math.Abs(point.y - top);
+        var bottomDistance = Math.Abs(point.y - bottom);
+        var minimum = Math.Min(Math.Min(leftDistance, rightDistance), Math.Min(topDistance, bottomDistance));
+
+        if (minimum == leftDistance)
+            return (left, Math.Clamp(point.y, entity.Top, entity.Bottom));
+        if (minimum == rightDistance)
+            return (right, Math.Clamp(point.y, entity.Top, entity.Bottom));
+        if (minimum == topDistance)
+            return (Math.Clamp(point.x, entity.Left, entity.Right), top);
+        return (Math.Clamp(point.x, entity.Left, entity.Right), bottom);
+    }
+
+    private void DrawLineSegment((int x, int y) start, (int x, int y) end)
+    {
+        var deltaX = Math.Abs(end.x - start.x);
+        var stepX = start.x < end.x ? 1 : -1;
+        var deltaY = -Math.Abs(end.y - start.y);
+        var stepY = start.y < end.y ? 1 : -1;
+        var error = deltaX + deltaY;
+        var x = start.x;
+        var y = start.y;
+
+        var segmentCharacter = start.x == end.x
+            ? '│'
+            : start.y == end.y
+                ? '─'
+                : Math.Sign(end.x - start.x) == Math.Sign(end.y - start.y) ? '╲' : '╱';
+
+        while (true)
+        {
+            if (!IsInsideEntity(x, y))
+            {
+                var existing = GetCellChar(x, y);
+                var character = existing is '─' or '│' or '╱' or '╲' or '┼'
+                    ? existing == segmentCharacter ? segmentCharacter : '┼'
+                    : segmentCharacter;
+                WriteChar(x, y, character, FlowColor);
+            }
+
+            if (x == end.x && y == end.y)
+                break;
+
+            var twiceError = 2 * error;
+            if (twiceError >= deltaY)
+            {
+                error += deltaY;
+                x += stepX;
+            }
+            if (twiceError <= deltaX)
+            {
+                error += deltaX;
+                y += stepY;
+            }
         }
     }
 

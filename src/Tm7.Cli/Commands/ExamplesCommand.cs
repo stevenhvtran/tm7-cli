@@ -24,10 +24,17 @@ internal static class ExamplesCommand
                 "tm7 new empty.tm7 --template custom-template.tm7 --name \"My Threat Model\"");
 
             WriteSection("Add entities",
-                "tm7 add entity model.tm7 --name \"Web API\" --type-id SE.P.TMCore.AzureAppServiceWebApp --generic-type-id GE.P --left 400 --top 200",
-                "tm7 add entity model.tm7 --name \"SQL Database\" --type-id SE.DS.TMCore.AzureSQLDB --generic-type-id GE.DS --left 700 --top 200",
-                "tm7 add entity model.tm7 --name \"User\" --type-id SE.EI.TMCore.Browser --generic-type-id GE.EI --left 100 --top 200",
-                "tm7 add entity model.tm7 --name \"Azure\" --type-id SE.TB.TMCore.AzureTrustBoundary --generic-type-id GE.TB.B --left 350 --top 50 --width 500 --height 400");
+                "tm7 add entity model.tm7 --name \"Web API\" --type-id SE.P.TMCore.AzureAppServiceWebApp --generic-type-id GE.P",
+                "tm7 add entity model.tm7 --name \"SQL Database\" --type-id SE.DS.TMCore.AzureSQLDB --generic-type-id GE.DS",
+                "tm7 add entity model.tm7 --name \"User\" --type-id SE.EI.TMCore.Browser --generic-type-id GE.EI",
+                "tm7 add entity model.tm7 --name \"Azure\" --type-id SE.TB.TMCore.AzureTrustBoundary --generic-type-id GE.TB.B",
+                "tm7 add entity model.tm7 --name \"API\" --type-id GE.P --generic-type-id GE.P --boundary <boundary-guid>");
+
+            WriteSection("Batch construction (defer layout until complete)",
+                "tm7 add surface model.tm7 --name \"Runtime\"",
+                "tm7 add entity model.tm7 --surface 1 --name \"API\" --type-id GE.P --generic-type-id GE.P --no-layout",
+                "tm7 add flow model.tm7 --surface 1 --name \"HTTPS\" --source <source-guid> --target <target-guid> --no-layout",
+                "tm7 layout model.tm7");
 
             WriteSection("Add data flows (use GUIDs from 'list entities')",
                 "tm7 add flow model.tm7 --name \"HTTPS Request\" --source <source-guid> --target <target-guid>",
@@ -40,6 +47,9 @@ internal static class ExamplesCommand
             WriteSection("Import from Graphviz DOT",
                 "tm7 import dot architecture.dot --output model.tm7",
                 "tm7 import dot architecture.dot --output model.tm7 --template custom-template.tm7");
+
+            WriteSection("Re-layout an existing model",
+                "tm7 layout model.tm7");
 
             WriteSection("Render diagram in the terminal",
                 "tm7 render model.tm7",
@@ -66,8 +76,8 @@ internal static class ExamplesCommand
             AnsiConsole.Write(new Rule("[dim]Workflow: build a model from scratch[/]").LeftJustified());
             AnsiConsole.WriteLine();
             AnsiConsole.MarkupLine("[dim]1.[/] tm7 new model.tm7 --name \"My App\"");
-            AnsiConsole.MarkupLine("[dim]2.[/] tm7 add entity model.tm7 --name \"User\" --type-id GE.EI --generic-type-id GE.EI --left 50 --top 200");
-            AnsiConsole.MarkupLine("[dim]3.[/] tm7 add entity model.tm7 --name \"API\" --type-id GE.P --generic-type-id GE.P --left 400 --top 200");
+            AnsiConsole.MarkupLine("[dim]2.[/] tm7 add entity model.tm7 --name \"User\" --type-id GE.EI --generic-type-id GE.EI");
+            AnsiConsole.MarkupLine("[dim]3.[/] tm7 add entity model.tm7 --name \"API\" --type-id GE.P --generic-type-id GE.P");
             AnsiConsole.MarkupLine("[dim]4.[/] tm7 list entities model.tm7  [dim]# get GUIDs[/]");
             AnsiConsole.MarkupLine("[dim]5.[/] tm7 add flow model.tm7 --name \"HTTPS\" --source <user-guid> --target <api-guid>");
             AnsiConsole.MarkupLine("[dim]6.[/] tm7 render model.tm7  [dim]# preview in terminal[/]");

@@ -104,8 +104,7 @@ public class AotExeIntegrationTests
                 "add", "entity", work,
                 "--name", "AotAdded",
                 "--type-id", "StencilEllipse",
-                "--generic-type-id", "GE.P",
-                "--left", "10", "--top", "10");
+                "--generic-type-id", "GE.P");
             Assert.True(code == 0, $"add exit={code} stderr={stderr}");
 
             // Reload via JIT and assert structural preservation: original 17 borders + 1 new.
@@ -146,8 +145,7 @@ public class AotExeIntegrationTests
                 "add", "entity", work,
                 "--name", "AotProbe",
                 "--type-id", "StencilEllipse",
-                "--generic-type-id", "GE.P",
-                "--left", "5", "--top", "5");
+                "--generic-type-id", "GE.P");
             Assert.True(code == 0, $"AOT add failed exit={code} stderr={stderr}");
 
             // Reload via JIT and confirm AOT preserved the threats and their properties.
@@ -215,9 +213,11 @@ public class AotExeIntegrationTests
         File.WriteAllText(dotPath, """
             digraph G {
               user [label="Browser"];
-              api [label="Web App"];
-              kv  [label="Key Vault"];
-              subgraph cluster_az { label="Azure Subscription"; api; kv; }
+              subgraph cluster_az {
+                label="Azure Subscription";
+                api [label="Web App"];
+                kv  [label="Key Vault"];
+              }
               user -> api [dir=both, label="HTTPS"];
               api -> kv [label="Get secret"];
             }
@@ -239,6 +239,14 @@ public class AotExeIntegrationTests
             foreach (var el in reloaded.KnowledgeBase.GenericElements) defined.Add(el.Id);
 
             var surface = reloaded.DrawingSurfaceList[0];
+            Assert.Contains(surface.Borders.Values.OfType<SerializableBorderBoundary>(),
+                boundary => boundary.TypeId == "SE.TB.TMCore.AzureTrustBoundary");
+            Assert.All(surface.Lines.Values.OfType<SerializableConnector>(), connector =>
+            {
+                Assert.NotEqual(StencilConnectionPort.None, connector.PortSource);
+                Assert.NotEqual(StencilConnectionPort.None, connector.PortTarget);
+                Assert.NotEqual((0, 0, 0, 0), (connector.X0, connector.Y0, connector.X1, connector.Y1));
+            });
             var emittedTypeIds = surface.Borders.Values.OfType<SerializableTaggable>()
                 .Concat(surface.Lines.Values.OfType<SerializableTaggable>())
                 .SelectMany(t => new[] { t.TypeId, t.GenericTypeId })

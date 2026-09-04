@@ -1,4 +1,5 @@
 using System.CommandLine;
+using Tm7.Cli.Layout;
 
 namespace Tm7.Cli.Commands;
 
@@ -21,7 +22,11 @@ internal static class RenderCommand
             var plain = parseResult.GetValue(plainOpt);
 
             var model = Tm7File.Load(file.FullName);
-            var output = Tm7Renderer.Render(model, width, height, plain);
+            var layout = Tm7GraphvizLayout.Apply(model);
+            var surfaceRoutes = model.DrawingSurfaceList.Count == 0
+                ? null
+                : layout.GetRoutes(model.DrawingSurfaceList[0].Guid);
+            var output = Tm7Renderer.Render(model, width, height, plain, surfaceRoutes);
 
             Console.Write(output);
         });

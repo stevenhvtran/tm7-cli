@@ -1,0 +1,42 @@
+digraph Demo {
+  label="Azure Service Architecture";
+  rankdir=LR;
+  node [shape=box];
+
+  generic_store [label="Generic Data Store"];
+  cosmos [label="Azure Cosmos DB"];
+  key_vault [label="Azure Key Vault"];
+  redis [label="Azure Redis Cache"];
+  storage [label="Azure Storage"];
+  database [label="Database"];
+  sql [label="Azure SQL Database"];
+  browser [label="Browser"];
+  external [label="Generic External Interactor"];
+  traffic_manager [label="Azure Traffic Manager"];
+  host [label="Host"];
+
+  subgraph cluster_generic {
+    label="Generic Trust Border Boundary";
+    generic_process [label="Generic Process"];
+    azure_ad [label="Azure AD"];
+  }
+
+  subgraph cluster_azure {
+    label="Azure Trust Boundary";
+    web_app [label="Azure App Service Web App"];
+    event_hub [label="Azure Event Hub"];
+  }
+
+  browser -> web_app [label="HTTPS Request"];
+  web_app -> cosmos [label="Database Queries"];
+  web_app -> redis [label="Cache Read/Write"];
+  web_app -> event_hub [label="Publish Events"];
+  web_app -> key_vault [label="Retrieve Secrets"];
+  external -> generic_process [label="API Calls"];
+  generic_process -> generic_store [label="CRUD Operations"];
+  generic_process -> azure_ad [label="OAuth Token Validation"];
+  event_hub -> host [label="Consume Events"];
+  host -> storage [label="File Upload"];
+  host -> sql [label="SQL Queries"];
+  traffic_manager -> web_app [label="Route Traffic"];
+}

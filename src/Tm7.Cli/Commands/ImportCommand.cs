@@ -1,5 +1,6 @@
 using System.CommandLine;
 using Spectre.Console;
+using Tm7.Cli.Layout;
 using Tm7.Cli.Model;
 using Tm7.Cli.Parsers;
 
@@ -26,134 +27,125 @@ internal static class ImportCommand
         var dotFileArg = new Argument<FileInfo>("dotfile") { Description = "Path to the .dot file." };
         var outputOpt = new Option<FileInfo>("--output") { Description = "Output .tm7 file path.", Required = true };
         var templateOpt = new Option<FileInfo?>("--template") { Description = "Template .tm7 file for KB. If omitted, the bundled Azure Threat Model template is used." };
+        var graphvizDotOpt = new Option<string?>("--graphviz-dot")
+        {
+            Description = $"Path to the Graphviz dot executable. Defaults to {GraphvizLayoutEngine.ExecutableEnvironmentVariable} or PATH."
+        };
 
-        var cmd = new Command("dot", "Import a Graphviz DOT file into a TM7 model.") { dotFileArg, outputOpt, templateOpt };
+        var cmd = new Command("dot", "Import a Graphviz DOT file into a TM7 model.")
+        {
+            dotFileArg,
+            outputOpt,
+            templateOpt,
+            graphvizDotOpt
+        };
 
         cmd.SetAction(parseResult =>
         {
             var dotFile = parseResult.GetValue(dotFileArg)!;
             var outputFile = parseResult.GetValue(outputOpt)!;
             var templateFile = parseResult.GetValue(templateOpt);
+            var graphvizDot = parseResult.GetValue(graphvizDotOpt);
 
             // 1. Parse DOT
             var dotGraph = DotParser.Parse(dotFile.FullName);
             AnsiConsole.MarkupLine($"[blue]Parsed DOT:[/] {dotGraph.Entities.Count} entities, {dotGraph.Edges.Count} edges, {dotGraph.Boundaries.Count} boundaries");
 
-            // 2. Load template for KB
+            // 2. Compute a topology-aware Graphviz layout
+            var layout = GraphvizLayoutEngine.Layout(dotFile.FullName, graphvizDot);
+            if (layout.Warnings.Length > 0)
+                AnsiConsole.MarkupLine($"[yellow]Graphviz:[/] {Markup.Escape(layout.Warnings)}");
+
+            // 3. Load template for KB
             var template = templateFile is null
                 ? Tm7File.LoadDefaultTemplate()
                 : Tm7File.Load(templateFile.FullName);
 
-            // 3. Build entity GUID map
+            // 4. Build entity GUID map
             var entityGuids = new Dictionary<string, Guid>();
             foreach (var entity in dotGraph.Entities)
                 entityGuids[entity.Id] = Guid.NewGuid();
+            var boundaryGuids = dotGraph.Boundaries.ToDictionary(
+                boundary => boundary.Id,
+                _ => Guid.NewGuid(),
+                StringComparer.Ordinal);
 
-            // 4. Create all border stencils
+            // 5. Create entity stencils at Graphviz-computed coordinates
             var borders = new List<SerializableBorder>();
-
-            // Layout: wide horizontal (LR) layout matching the DOT rankdir=LR
-            var externalEntities = dotGraph.Entities.Where(e => !e.IsInsideBoundary).ToList();
-            var internalEntities = dotGraph.Entities.Where(e => e.IsInsideBoundary).ToList();
-
-            const int entityW = 150;
-            const int entityH = 80;
-            const int vGap = 140;  // vertical gap between entities in same column
-
-            // Classify internal entities into columns
-            var col0 = new List<DotEntity>(); // left inside boundary: AFD, Entra ID, CORP Graph
-            var col1 = new List<DotEntity>(); // center: core processes (cronjobs, Web App)
-            var col2a = new List<DotEntity>(); // right-upper: data stores (blobs, cosmos)
-            var col2b = new List<DotEntity>(); // right-lower: other (ADX, KV, Postgres, AppInsights)
-
-            foreach (var ent in internalEntities)
+            var entityBorders = new Dictionary<string, SerializableBorder>(StringComparer.Ordinal);
+            foreach (var entity in dotGraph.Entities)
             {
-                var mapping = DotToTm7Mapper.MapEntityType(ent.Id, ent.Label, true);
-                var layoutCol = DotToTm7Mapper.GetLayoutColumn(ent.Id, ent.Label, mapping.GenericTypeId);
-                switch (layoutCol)
+                var mapping = DotToTm7Mapper.MapEntityType(entity.Id, entity.Label, entity.IsInsideBoundary);
+                var bounds = layout.GetModelBounds(entity.Id);
+                var border = CommandHelpers.CreateStencil(
+                    mapping.GenericTypeId,
+                    entityGuids[entity.Id],
+                    mapping.TypeId,
+                    CommandHelpers.CreateEntityProperties(entity.Label),
+                    bounds.Left,
+                    bounds.Top,
+                    bounds.Width,
+                    bounds.Height);
+                if (entity.BoundaryId is not null &&
+                    boundaryGuids.TryGetValue(entity.BoundaryId, out var parentBoundaryGuid))
                 {
-                    case 0: col0.Add(ent); break;
-                    case 1: col1.Add(ent); break;
-                    default:
-                        // Split col2 into two sub-columns: storage-type vs process-type
-                        if (mapping.GenericTypeId == "GE.DS")
-                            col2a.Add(ent);
-                        else
-                            col2b.Add(ent);
-                        break;
+                    CommandHelpers.SetLayoutParent(border, parentBoundaryGuid);
                 }
+                borders.Add(border);
+                entityBorders.Add(entity.Id, border);
             }
 
-            // Column X positions — wide spread
-            const int extCol = 30;
-            const int col0X = 350;
-            const int col1X = 700;
-            const int col2aX = 1050;   // data stores
-            const int col2bX = 1350;   // supporting processes (ADX, AppInsights)
-
-            // Compute max rows to size the canvas
-            int maxRows = Math.Max(Math.Max(externalEntities.Count, col0.Count),
-                          Math.Max(col1.Count, Math.Max(col2a.Count, col2b.Count)));
-            int canvasHeight = Math.Max(600, 60 + maxRows * vGap + 60);
-
-            void PlaceColumn(List<DotEntity> column, int x, bool insideBoundary)
-            {
-                // Center column vertically within canvas
-                int totalHeight = column.Count * entityH + (column.Count - 1) * (vGap - entityH);
-                int startY = Math.Max(60, canvasHeight / 2 - totalHeight / 2);
-                int y = startY;
-                foreach (var ent in column)
-                {
-                    var mapping = insideBoundary
-                        ? DotToTm7Mapper.MapEntityType(ent.Id, ent.Label, true)
-                        : DotToTm7Mapper.MapEntityType(ent.Id, ent.Label, false);
-                    var guid = entityGuids[ent.Id];
-                    var props = CommandHelpers.CreateEntityProperties(ent.Label);
-                    borders.Add(CommandHelpers.CreateStencil(mapping.GenericTypeId, guid, mapping.TypeId, props, x, y, entityW, entityH));
-                    y += vGap;
-                }
-            }
-
-            // Place all columns
-            PlaceColumn(externalEntities, extCol, false);
-            PlaceColumn(col0, col0X, true);
-            PlaceColumn(col1, col1X, true);
-            PlaceColumn(col2a, col2aX, true);
-            PlaceColumn(col2b, col2bX, true);
-
-            // Create boundary: encompass all internal entities with padding
+            // Graphviz plain output omits clusters, so derive each TM7 boundary from
+            // the Graphviz-positioned nodes that the DOT parser associated with it.
+            const int boundaryPadding = 50;
             foreach (var boundary in dotGraph.Boundaries)
             {
+                var contained = boundary.ContainedEntityIds
+                    .Distinct(StringComparer.Ordinal)
+                    .Where(entityBorders.ContainsKey)
+                    .Select(id => entityBorders[id])
+                    .ToList();
                 var bMapping = DotToTm7Mapper.MapBoundaryType(boundary.Label);
-                var bGuid = Guid.NewGuid();
+                var bGuid = boundaryGuids[boundary.Id];
                 var bProps = CommandHelpers.CreateEntityProperties(boundary.Label);
-                // Boundary spans from col0 to rightmost column
-                int rightEdge = col2b.Count > 0 ? col2bX : col2aX;
-                int boundaryLeft = col0X - 40;
-                int boundaryWidth = rightEdge + entityW + 40 - boundaryLeft;
-                int boundaryTop = 20;
-                int boundaryHeight = canvasHeight - 20;
-                borders.Add(CommandHelpers.CreateStencil(bMapping.GenericTypeId, bGuid, bMapping.TypeId, bProps, boundaryLeft, boundaryTop, boundaryWidth, boundaryHeight));
+                int boundaryLeft = contained.Count == 0
+                    ? 60
+                    : contained.Min(e => e.Left) - boundaryPadding;
+                int boundaryTop = contained.Count == 0
+                    ? 60
+                    : contained.Min(e => e.Top) - boundaryPadding;
+                int boundaryRight = contained.Count == 0
+                    ? 360
+                    : contained.Max(e => e.Left + e.Width) + boundaryPadding;
+                int boundaryBottom = contained.Count == 0
+                    ? 260
+                    : contained.Max(e => e.Top + e.Height) + boundaryPadding;
+                int boundaryWidth = boundaryRight - boundaryLeft;
+                int boundaryHeight = boundaryBottom - boundaryTop;
+                var boundaryStencil = CommandHelpers.CreateStencil(
+                    bMapping.GenericTypeId,
+                    bGuid,
+                    bMapping.TypeId,
+                    bProps,
+                    boundaryLeft,
+                    boundaryTop,
+                    boundaryWidth,
+                    boundaryHeight);
+                if (boundary.ParentBoundaryId is not null &&
+                    boundaryGuids.TryGetValue(boundary.ParentBoundaryId, out var parentBoundaryGuid))
+                {
+                    CommandHelpers.SetLayoutParent(boundaryStencil, parentBoundaryGuid);
+                }
+                borders.Add(boundaryStencil);
             }
 
-            // 5. Create flows with smart port routing
+            // 6. Create flows with smart port routing
             var flowLines = new List<SerializableLine>();
             foreach (var edge in dotGraph.Edges)
             {
                 if (!entityGuids.TryGetValue(edge.SourceId, out var srcGuid) ||
                     !entityGuids.TryGetValue(edge.TargetId, out var tgtGuid))
                     continue;
-
-                var srcBorder = borders.FirstOrDefault(b => b.Guid == srcGuid);
-                var tgtBorder = borders.FirstOrDefault(b => b.Guid == tgtGuid);
-                if (srcBorder == null || tgtBorder == null) continue;
-
-                // Compute edge attachment points based on relative direction
-                // Source exits from the side closest to target; target receives on closest side
-                var (srcX, srcY, srcPort) = ComputeEdgePoint(srcBorder, tgtBorder, isSource: true);
-                var (tgtX, tgtY, tgtPort) = ComputeEdgePoint(tgtBorder, srcBorder, isSource: false);
-                int handleX = (srcX + tgtX) / 2;
-                int handleY = (srcY + tgtY) / 2;
 
                 string flowLabel = edge.Label.Length > 0 ? edge.Label : $"{GetEntityLabelShort(dotGraph, edge.SourceId)} -> {GetEntityLabelShort(dotGraph, edge.TargetId)}";
 
@@ -163,8 +155,8 @@ internal static class ImportCommand
                 flowLines.Add(new SerializableConnector(
                     fwdGuid, ForwardFlowTypeId, GenericFlowTypeId, fwdProps,
                     tgtGuid, srcGuid,
-                    tgtPort, srcPort,
-                    srcX, srcY, tgtX, tgtY, handleX, handleY,
+                    StencilConnectionPort.None, StencilConnectionPort.None,
+                    0, 0, 0, 0, 0, 0,
                     1.0, ""));
 
                 // Reverse flow for bidirectional
@@ -175,21 +167,16 @@ internal static class ImportCommand
                         : $"{GetEntityLabelShort(dotGraph, edge.TargetId)} -> {GetEntityLabelShort(dotGraph, edge.SourceId)}";
                     var revGuid = Guid.NewGuid();
                     var revProps = CommandHelpers.CreateFlowProperties(revLabel);
-                    // Reverse: swap src/tgt, use opposite ports
-                    var (revSrcX, revSrcY, revSrcPort) = ComputeEdgePoint(tgtBorder, srcBorder, isSource: true);
-                    var (revTgtX, revTgtY, revTgtPort) = ComputeEdgePoint(srcBorder, tgtBorder, isSource: false);
-                    int revHandleX = (revSrcX + revTgtX) / 2;
-                    int revHandleY = (revSrcY + revTgtY) / 2 + 15; // slight offset so labels don't overlap
                     flowLines.Add(new SerializableConnector(
                         revGuid, ReverseFlowTypeId, GenericFlowTypeId, revProps,
                         srcGuid, tgtGuid,
-                        revTgtPort, revSrcPort,
-                        revSrcX, revSrcY, revTgtX, revTgtY, revHandleX, revHandleY,
+                        StencilConnectionPort.None, StencilConnectionPort.None,
+                        0, 0, 0, 0, 0, 0,
                         1.0, ""));
                 }
             }
 
-            // 6. Build the model
+            // 7. Build the model
             string modelName = "OSMP Threat Model";
             if (dotGraph.Label != null)
             {
@@ -219,6 +206,10 @@ internal static class ImportCommand
                 template.KnowledgeBase,
                 template.Profile ?? new SerializableProfile());
 
+            Tm7GraphvizLayout.Apply(
+                newModel,
+                graphvizDot,
+                dotGraph.RankDirection);
             Tm7File.Save(newModel, outputFile.FullName);
 
             var kbName = template.KnowledgeBase.Manifest?.Name;
@@ -226,7 +217,7 @@ internal static class ImportCommand
                 ? (string.IsNullOrEmpty(kbName) ? "bundled default template" : $"bundled default template: {kbName}")
                 : templateFile.Name;
             AnsiConsole.MarkupLine($"[green]Imported[/] {Markup.Escape(outputFile.FullName)} [dim](KB: {Markup.Escape(templateLabel)})[/]");
-            AnsiConsole.MarkupLine($"  Entities: {borders.Count} ({externalEntities.Count} external, {internalEntities.Count} internal, {dotGraph.Boundaries.Count} boundaries)");
+            AnsiConsole.MarkupLine($"  Entities: {borders.Count} ({dotGraph.Entities.Count(e => !e.IsInsideBoundary)} external, {dotGraph.Entities.Count(e => e.IsInsideBoundary)} internal, {dotGraph.Boundaries.Count} boundaries)");
             AnsiConsole.MarkupLine($"  Flows: {flowLines.Count}");
         });
         return cmd;
@@ -243,37 +234,4 @@ internal static class ImportCommand
         return label.Length > 30 ? label[..30] : label;
     }
 
-    /// <summary>
-    /// Computes the edge attachment point on an entity border based on the direction to another entity.
-    /// Returns (x, y, port) where the connector should attach.
-    /// </summary>
-    static (int x, int y, StencilConnectionPort port) ComputeEdgePoint(
-        SerializableBorder entity, SerializableBorder other, bool isSource)
-    {
-        int cx = entity.Left + entity.Width / 2;
-        int cy = entity.Top + entity.Height / 2;
-        int ox = other.Left + other.Width / 2;
-        int oy = other.Top + other.Height / 2;
-
-        int dx = ox - cx;
-        int dy = oy - cy;
-
-        // Determine dominant direction
-        if (Math.Abs(dx) > Math.Abs(dy))
-        {
-            // Horizontal: use East or West port
-            if (dx > 0)
-                return (entity.Left + entity.Width, cy, isSource ? StencilConnectionPort.East : StencilConnectionPort.East);
-            else
-                return (entity.Left, cy, isSource ? StencilConnectionPort.West : StencilConnectionPort.West);
-        }
-        else
-        {
-            // Vertical: use North or South port
-            if (dy > 0)
-                return (cx, entity.Top + entity.Height, isSource ? StencilConnectionPort.South : StencilConnectionPort.South);
-            else
-                return (cx, entity.Top, isSource ? StencilConnectionPort.North : StencilConnectionPort.North);
-        }
-    }
 }

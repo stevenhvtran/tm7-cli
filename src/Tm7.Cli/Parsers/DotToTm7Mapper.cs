@@ -20,6 +20,10 @@ public static class DotToTm7Mapper
         if (upper.Contains("BLOB") || upper.Contains("STORAGE"))
             return new("SE.DS.TMCore.AzureStorage", "GE.DS");
 
+        // Redis
+        if (upper.Contains("REDIS"))
+            return new("SE.P.TMCore.AzureRedis", "GE.DS");
+
         // Postgres
         if (upper.Contains("POSTGRES"))
             return new("SE.DS.TMCore.AzurePostgresDB", "GE.DS");
@@ -27,6 +31,14 @@ public static class DotToTm7Mapper
         // Cosmos
         if (upper.Contains("COSMOS") || idUpper == "COSMOS")
             return new("SE.P.TMCore.AzureDocumentDB", "GE.DS");
+
+        // SQL / generic database
+        if (upper.Contains("GENERIC DATA STORE"))
+            return new("GE.DS", "GE.DS");
+        if (upper.Contains("AZURE SQL"))
+            return new("SE.DS.TMCore.AzureSQLDB", "GE.DS");
+        if (upper.Contains("DATABASE") || upper.Contains("DATA STORE"))
+            return new("SE.DS.TMCore.SQL", "GE.DS");
 
         // Azure Data Explorer / Kusto / ADX
         if (upper.Contains("DATA EXPLORER") || upper.Contains("KUSTO") || upper.Contains("ADX"))
@@ -43,6 +55,14 @@ public static class DotToTm7Mapper
         // Front Door
         if (upper.Contains("FRONT DOOR"))
             return new("GE.P", "GE.P");
+
+        // Event Hub / Traffic Manager / Host
+        if (upper.Contains("EVENT HUB"))
+            return new("SE.P.TMCore.AzureEventHub", "GE.P");
+        if (upper.Contains("TRAFFIC MANAGER"))
+            return new("SE.P.TMCore.AzureTrafficManager", "GE.P");
+        if (upper == "HOST")
+            return new("SE.P.TMCore.Host", "GE.P");
 
         // Web App / Node.js
         if (upper.Contains("WEB APP") || upper.Contains("NODE.JS") || upper.Contains("NODEJS"))
@@ -78,33 +98,4 @@ public static class DotToTm7Mapper
         return new("GE.TB.B", "GE.TB.B");
     }
 
-    /// <summary>
-    /// Classifies entities inside a boundary into layout columns.
-    /// Column 0: External-facing processes (x=300) - Front Door, Entra, Graph
-    /// Column 1: Core processes (x=500) - cronjobs, Web App
-    /// Column 2: Data stores and supporting processes (x=750) - blobs, cosmos, postgres, key vault, ADX, App Insights
-    /// </summary>
-    public static int GetLayoutColumn(string id, string label, string genericTypeId)
-    {
-        var upper = label.ToUpperInvariant();
-        var idUpper = id.ToUpperInvariant();
-
-        // Data stores always go right
-        if (genericTypeId == "GE.DS")
-            return 2;
-
-        // ADX, App Insights go right
-        if (upper.Contains("DATA EXPLORER") || upper.Contains("KUSTO") || upper.Contains("ADX") ||
-            upper.Contains("APP INSIGHTS") || upper.Contains("APPLICATION INSIGHTS") || idUpper == "APPINSIGHTS")
-            return 2;
-
-        // Front Door, Entra/AAD, Graph/Directory go left
-        if (upper.Contains("FRONT DOOR") || upper.Contains("ENTRA") || upper.Contains("AZURE AD") ||
-            upper.Contains("AAD") || idUpper == "AAD" ||
-            upper.Contains("GRAPH") || upper.Contains("DIRECTORY"))
-            return 0;
-
-        // Core processes (cronjobs, web app) go center
-        return 1;
-    }
 }

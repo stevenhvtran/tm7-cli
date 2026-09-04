@@ -20,6 +20,7 @@ public static class CommandFactory
         rootCommand.Add(RemoveCommand.Create());
         rootCommand.Add(NewCommand.Create());
         rootCommand.Add(ImportCommand.Create());
+        rootCommand.Add(LayoutCommand.Create());
         rootCommand.Add(RenderCommand.Create());
         rootCommand.Add(ExamplesCommand.Create());
         return rootCommand;

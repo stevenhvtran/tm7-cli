@@ -28,6 +28,7 @@
     <Authors>gholliday</Authors>
     <Description>A CLI tool for constructing, interrogating, and modifying Microsoft Threat Modeling Tool (.tm7) files.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>tm7</ToolCommandName>
   </PropertyGroup>
@@ -46,6 +47,7 @@
     <!-- Bundled default template (Azure Threat Model Template KB).
          Used by `tm7 new` and `tm7 import dot` when the template option is not specified. -->
     <EmbeddedResource Include="..\..\samples\template.tm7" LogicalName="Tm7.Cli.Resources.DefaultTemplate.tm7" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
   <ItemGroup>

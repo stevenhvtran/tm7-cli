@@ -1,5 +1,6 @@
 using System.CommandLine;
 using Spectre.Console;
+using Tm7.Cli.Layout;
 using Tm7.Cli.Model;
 
 namespace Tm7.Cli.Commands;
@@ -60,6 +61,7 @@ internal static class RemoveCommand
 
             if (found)
             {
+                Tm7GraphvizLayout.Apply(model);
                 Tm7File.Save(model, file.FullName);
                 AnsiConsole.MarkupLine($"[green]Removed entity[/] [dim]{entityGuid}[/]");
             }
@@ -106,6 +108,7 @@ internal static class RemoveCommand
 
             if (found)
             {
+                Tm7GraphvizLayout.Apply(model);
                 Tm7File.Save(model, file.FullName);
                 AnsiConsole.MarkupLine($"[green]Removed flow[/] [dim]{flowGuid}[/]");
             }

@@ -2,10 +2,23 @@ using System.Text.RegularExpressions;
 
 namespace Tm7.Cli.Parsers;
 
-public record DotEntity(string Id, string Label, bool IsInsideBoundary);
+public record DotEntity(string Id, string Label, string? BoundaryId)
+{
+    public bool IsInsideBoundary => BoundaryId is not null;
+}
+
 public record DotEdge(string SourceId, string TargetId, string Label, bool Bidirectional);
-public record DotBoundary(string Id, string Label, List<string> ContainedEntityIds);
-public record DotGraph(string? Label, List<DotEntity> Entities, List<DotEdge> Edges, List<DotBoundary> Boundaries);
+public record DotBoundary(
+    string Id,
+    string Label,
+    List<string> ContainedEntityIds,
+    string? ParentBoundaryId);
+public record DotGraph(
+    string? Label,
+    string? RankDirection,
+    List<DotEntity> Entities,
+    List<DotEdge> Edges,
+    List<DotBoundary> Boundaries);
 
 public static class DotParser
 {
@@ -19,29 +32,36 @@ public static class DotParser
         var entities = new Dictionary<string, string>(); // id -> label
         var edges = new List<DotEdge>();
         var boundaries = new List<DotBoundary>();
-        var boundaryEntityIds = new HashSet<string>();
+        var entityBoundaryIds = new Dictionary<string, BoundaryMembership>(StringComparer.Ordinal);
         string? graphLabel = null;
+        string? rankDirection = null;
 
         // Join multi-line label statement (the graph label spans multiple lines)
         var joined = JoinMultiLineStatements(lines);
 
         // Track which boundary context we're in
-        var boundaryStack = new Stack<(string id, string label, List<string> entityIds)>();
-        bool inClusterBoundary = false;
+        var boundaryStack = new Stack<BoundaryContext>();
 
         foreach (var line in joined)
         {
             var trimmed = line.Trim();
             if (trimmed.Length == 0 || trimmed.StartsWith("//") || trimmed.StartsWith("@")) continue;
 
+            var rankDirectionMatch = Regex.Match(
+                trimmed,
+                @"\brankdir\s*=\s*""?(LR|RL|TB|BT)""?",
+                RegexOptions.IgnoreCase);
+            if (rankDirectionMatch.Success && boundaryStack.Count == 0)
+                rankDirection = rankDirectionMatch.Groups[1].Value.ToUpperInvariant();
+
             // Skip top-level graph declaration
             if (trimmed.StartsWith("digraph ")) continue;
 
             // Skip global attributes
-            if (trimmed.StartsWith("node [") || trimmed.StartsWith("edge [") ||
+            if (trimmed.StartsWith("graph [") || trimmed.StartsWith("node [") || trimmed.StartsWith("edge [") ||
                 trimmed.StartsWith("fontname=") || trimmed.StartsWith("fontsize=") ||
                 trimmed.StartsWith("rankdir=")) continue;
-            if (Regex.IsMatch(trimmed, @"^(node|edge)\s+\[")) continue;
+            if (Regex.IsMatch(trimmed, @"^(graph|node|edge)\s+\[")) continue;
             // Skip lines that are just global graph attributes
             if (Regex.IsMatch(trimmed, @"^(fontname|fontsize|rankdir)\s*=")) continue;
             // Combined attribute lines like "fontname=Helvetica fontsize=12 rankdir=LR"
@@ -53,31 +73,21 @@ public static class DotParser
                 if (boundaryStack.Count > 0)
                 {
                     var b = boundaryStack.Pop();
-                    if (b.label.Length > 0) // only named clusters become boundaries
+                    if (b.IsNamedCluster)
                     {
-                        boundaries.Add(new DotBoundary(b.id, b.label, b.entityIds));
-                        foreach (var eid in b.entityIds)
-                            boundaryEntityIds.Add(eid);
+                        boundaries.Add(new DotBoundary(
+                            b.Id,
+                            b.Label.Length == 0 ? b.Id : b.Label,
+                            b.EntityIds,
+                            b.ParentBoundaryId));
                     }
-                    else
+
+                    if (boundaryStack.Count > 0)
                     {
-                        // Anonymous subgraph - entities belong to parent boundary
-                        if (boundaryStack.Count > 0)
-                        {
-                            foreach (var eid in b.entityIds)
-                                boundaryStack.Peek().entityIds.Add(eid);
-                        }
-                        else
-                        {
-                            // Mark as inside boundary if this anon subgraph was inside a cluster
-                            if (inClusterBoundary)
-                            {
-                                // They'll be picked up when the parent cluster closes
-                            }
-                        }
+                        foreach (var eid in b.EntityIds)
+                            boundaryStack.Peek().AddEntity(eid);
                     }
-                    if (boundaryStack.Count == 0)
-                        inClusterBoundary = false;
+
                 }
                 continue;
             }
@@ -87,8 +97,10 @@ public static class DotParser
             if (clusterMatch.Success)
             {
                 var clusterId = clusterMatch.Groups[1].Value;
-                boundaryStack.Push((clusterId, "", new List<string>()));
-                inClusterBoundary = true;
+                boundaryStack.Push(new BoundaryContext(
+                    clusterId,
+                    isNamedCluster: true,
+                    FindNearestNamedBoundaryId(boundaryStack)));
                 // Parse inline attributes for label
                 var rest = trimmed[(clusterMatch.Index + clusterMatch.Length)..];
                 // Attributes may follow on same or next lines
@@ -98,7 +110,10 @@ public static class DotParser
             // Anonymous subgraph
             if (Regex.IsMatch(trimmed, @"^subgraph\s*\{"))
             {
-                boundaryStack.Push(("anon_" + boundaries.Count, "", new List<string>()));
+                boundaryStack.Push(new BoundaryContext(
+                    "anon_" + boundaries.Count,
+                    isNamedCluster: false,
+                    FindNearestNamedBoundaryId(boundaryStack)));
                 continue;
             }
 
@@ -108,10 +123,7 @@ public static class DotParser
                 // Check if line contains a label attribute (standalone attribute line, not a node/edge)
                 var labelInLine = Regex.Match(trimmed, @"label\s*=\s*""([^""]+)""");
                 if (labelInLine.Success)
-                {
-                    var top = boundaryStack.Pop();
-                    boundaryStack.Push((top.id, labelInLine.Groups[1].Value, top.entityIds));
-                }
+                    boundaryStack.Peek().Label = labelInLine.Groups[1].Value;
                 continue;
             }
 
@@ -146,8 +158,8 @@ public static class DotParser
                     edges.Add(new DotEdge(src, target, edgeLabel, bidir));
                     if (boundaryStack.Count > 0)
                     {
-                        AddToBoundary(boundaryStack, src);
-                        AddToBoundary(boundaryStack, target);
+                        AddToBoundary(boundaryStack, entityBoundaryIds, src);
+                        AddToBoundary(boundaryStack, entityBoundaryIds, target);
                     }
                 }
                 continue;
@@ -169,8 +181,8 @@ public static class DotParser
                     edges.Add(new DotEdge(source, tgt, edgeLabel, bidir));
                     if (boundaryStack.Count > 0)
                     {
-                        AddToBoundary(boundaryStack, source);
-                        AddToBoundary(boundaryStack, tgt);
+                        AddToBoundary(boundaryStack, entityBoundaryIds, source);
+                        AddToBoundary(boundaryStack, entityBoundaryIds, tgt);
                     }
                 }
                 continue;
@@ -190,8 +202,8 @@ public static class DotParser
                 edges.Add(new DotEdge(src, tgt, edgeLabel, bidir));
                 if (boundaryStack.Count > 0)
                 {
-                    AddToBoundary(boundaryStack, src);
-                    AddToBoundary(boundaryStack, tgt);
+                    AddToBoundary(boundaryStack, entityBoundaryIds, src);
+                    AddToBoundary(boundaryStack, entityBoundaryIds, tgt);
                 }
                 continue;
             }
@@ -205,17 +217,31 @@ public static class DotParser
                 var label = ExtractAttr("[" + attrs + "]", "label") ?? nodeId;
                 entities[nodeId] = label;
                 if (boundaryStack.Count > 0)
-                    AddToBoundary(boundaryStack, nodeId);
+                    AddToBoundary(boundaryStack, entityBoundaryIds, nodeId);
                 continue;
+            }
+
+            // Bare node declaration, commonly used inside a cluster after the
+            // node's attributes were declared at graph scope.
+            var bareNodeMatch = Regex.Match(trimmed, @"^(\w+)\s*;?\s*$");
+            if (bareNodeMatch.Success)
+            {
+                var nodeId = bareNodeMatch.Groups[1].Value;
+                EnsureEntity(entities, nodeId);
+                if (boundaryStack.Count > 0)
+                    AddToBoundary(boundaryStack, entityBoundaryIds, nodeId);
             }
         }
 
         // Build final entity list
         var entityList = entities.Select(kvp =>
-            new DotEntity(kvp.Key, kvp.Value, boundaryEntityIds.Contains(kvp.Key)))
+            new DotEntity(
+                kvp.Key,
+                kvp.Value,
+                entityBoundaryIds.GetValueOrDefault(kvp.Key)?.BoundaryId))
             .ToList();
 
-        return new DotGraph(graphLabel, entityList, edges, boundaries);
+        return new DotGraph(graphLabel, rankDirection, entityList, edges, boundaries);
     }
 
     static List<string> JoinMultiLineStatements(List<string> lines)
@@ -273,12 +299,50 @@ public static class DotParser
             entities[id] = id; // Use id as default label
     }
 
-    static void AddToBoundary(Stack<(string id, string label, List<string> entityIds)> stack, string entityId)
+    static void AddToBoundary(
+        Stack<BoundaryContext> stack,
+        Dictionary<string, BoundaryMembership> entityBoundaryIds,
+        string entityId)
     {
-        var top = stack.Peek();
-        if (!top.entityIds.Contains(entityId))
-            top.entityIds.Add(entityId);
+        stack.Peek().AddEntity(entityId);
+        var namedBoundaries = stack
+            .Where(context => context.IsNamedCluster)
+            .ToList();
+        if (namedBoundaries.Count == 0)
+            return;
+
+        var membership = new BoundaryMembership(
+            namedBoundaries[0].Id,
+            namedBoundaries.Count);
+        if (!entityBoundaryIds.TryGetValue(entityId, out var existing) ||
+            membership.Depth >= existing.Depth)
+        {
+            entityBoundaryIds[entityId] = membership;
+        }
     }
+
+    static string? FindNearestNamedBoundaryId(IEnumerable<BoundaryContext> stack)
+        => stack.FirstOrDefault(context => context.IsNamedCluster)?.Id;
+
+    sealed class BoundaryContext(
+        string id,
+        bool isNamedCluster,
+        string? parentBoundaryId)
+    {
+        public string Id { get; } = id;
+        public bool IsNamedCluster { get; } = isNamedCluster;
+        public string? ParentBoundaryId { get; } = parentBoundaryId;
+        public string Label { get; set; } = "";
+        public List<string> EntityIds { get; } = [];
+
+        public void AddEntity(string entityId)
+        {
+            if (!EntityIds.Contains(entityId))
+                EntityIds.Add(entityId);
+        }
+    }
+
+    sealed record BoundaryMembership(string BoundaryId, int Depth);
 
     static string? ExtractAttr(string attrs, string name)
     {

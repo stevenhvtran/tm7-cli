@@ -8,9 +8,10 @@
       * tm7-<rid>.zip      (Windows) or tm7-<rid>.tar.gz (Linux/macOS)
       * tm7-<rid>.json     sidecar metadata describing the archive (incl. sha256)
 
-    tm7 is a pure-managed NativeAOT application (no native sidecar libraries), so
-    the published output is a single executable. The archive therefore contains
-    just that executable plus any user-facing docs found at the repo root.
+    tm7 is a pure-managed NativeAOT application (no bundled native sidecar
+    libraries), so the published output is a single executable. Graphviz remains
+    an external runtime prerequisite for layout-backed commands. The archive
+    contains the executable plus any user-facing docs found at the repo root.
 
 .NOTES
     Designed to run on the *native* architecture for the requested RID, so no
@@ -121,6 +122,7 @@ try {
         assetName         = $assetName
         fileType          = $fileType
         commandName       = 'tm7'
+        runtimeDependencies = @('Graphviz dot executable for layout-backed commands')
         sha256            = $hash
     }
     $metadataPath = Join-Path $artifactsDirectory "tm7-$RuntimeIdentifier.json"

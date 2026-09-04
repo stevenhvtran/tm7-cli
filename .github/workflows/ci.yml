@@ -27,6 +27,18 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      - name: Install Graphviz (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes graphviz
+
+      - name: Install Graphviz (Windows)
+        if: runner.os == 'Windows'
+        run: choco install graphviz --yes --no-progress
+
+      - name: Install Graphviz (macOS)
+        if: runner.os == 'macOS'
+        run: brew install graphviz
+
       - name: Restore
         run: dotnet restore
 

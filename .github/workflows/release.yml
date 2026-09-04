@@ -92,7 +92,17 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y clang zlib1g-dev
+          sudo apt-get install -y clang graphviz zlib1g-dev
+
+      - name: Install Graphviz (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install graphviz --yes --no-progress
+
+      - name: Install Graphviz (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: brew install graphviz
 
       - name: Publish native asset
         shell: pwsh
@@ -126,14 +136,21 @@ jobs:
               throw "Version mismatch: expected '$version' but binary reported '$actualBase'."
           }
 
-          # Functional smoke: create a model from the bundled template and open it,
-          # exercising the embedded resource + DataContractSerializer round-trip under AOT.
+          # Functional smoke: exercise the bundled template, Graphviz process invocation,
+          # DataContractSerializer round-trip, and terminal rendering under NativeAOT.
           $model = Join-Path $dir 'smoke.tm7'
           & $exe new $model --name 'Smoke Test'
           if ($LASTEXITCODE -ne 0) { throw "tm7 new failed (exit $LASTEXITCODE)." }
+          & $exe add entity $model --name 'Smoke API' --type-id GE.P --generic-type-id GE.P
+          if ($LASTEXITCODE -ne 0) { throw "tm7 add entity failed (exit $LASTEXITCODE)." }
           & $exe open $model
           if ($LASTEXITCODE -ne 0) { throw "tm7 open failed (exit $LASTEXITCODE)." }
-          Write-Host 'Functional smoke passed (new + open).'
+          $rendered = (& $exe render $model --plain | Out-String)
+          if ($LASTEXITCODE -ne 0) { throw "tm7 render failed (exit $LASTEXITCODE)." }
+          if (-not $rendered.Contains('Smoke API')) {
+            throw 'tm7 render output did not contain the smoke-test entity.'
+          }
+          Write-Host 'Functional smoke passed (new + Graphviz layout + open + render).'
 
       - name: Upload release asset
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -185,6 +202,7 @@ jobs:
 
           Self-contained NativeAOT binaries for Windows, Linux, and macOS (x64 and arm64).
 
+          - Graphviz is required for layout-backed commands; see the bundled README for installation instructions.
           - Verify downloads against \`checksums.txt\` (SHA-256).
           - Asset details are listed in \`release-metadata.json\`.
           EOF

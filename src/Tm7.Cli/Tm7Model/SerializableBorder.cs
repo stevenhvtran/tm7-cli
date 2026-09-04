@@ -36,4 +36,12 @@ public abstract class SerializableBorder : SerializableTaggable
         StrokeThickness = strokeThickness;
         StrokeDashArray = strokeDashArray;
     }
+
+    internal void SetBounds(int left, int top, int width, int height)
+    {
+        Left = left;
+        Top = top;
+        Width = width;
+        Height = height;
+    }
 }

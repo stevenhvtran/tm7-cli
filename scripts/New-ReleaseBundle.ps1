@@ -85,8 +85,9 @@ foreach ($archive in $archives) {
 $checksumLines | Set-Content -Path (Join-Path $outputDirectory 'checksums.txt') -Encoding ascii
 
 $metadata = [ordered]@{
-    version = $Version
-    assets  = $assets
+    version             = $Version
+    runtimeDependencies = @('Graphviz dot executable for layout-backed commands')
+    assets              = $assets
 }
 $metadata | ConvertTo-Json -Depth 6 | Set-Content -Path (Join-Path $outputDirectory 'release-metadata.json') -Encoding utf8
 

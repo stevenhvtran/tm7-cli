@@ -69,7 +69,11 @@ public class DefaultTemplateTests
         new object[] { "kv1",        "Key Vault",                       true  },
         new object[] { "blob1",      "Blob",                            true  },
         new object[] { "storage1",   "Storage",                         true  },
+        new object[] { "redis1",     "Redis",                           true  },
         new object[] { "pg1",        "Postgres DB",                     true  },
+        new object[] { "sql1",       "Azure SQL Database",              true  },
+        new object[] { "db1",        "Database",                        true  },
+        new object[] { "gds1",       "Generic Data Store",              true  },
         new object[] { "cosmos1",    "Some Cosmos thing",               true  },
         new object[] { "COSMOS",     "cosmos",                          true  }, // matched by id
         new object[] { "adx1",       "Azure Data Explorer",             true  },
@@ -83,6 +87,9 @@ public class DefaultTemplateTests
         new object[] { "aad2",       "AAD service",                     true  },
         new object[] { "AAD",        "service",                         true  }, // matched by id
         new object[] { "fd1",        "Front Door",                      true  },
+        new object[] { "eh1",        "Event Hub",                       true  },
+        new object[] { "tm1",        "Traffic Manager",                 true  },
+        new object[] { "host1",      "Host",                            true  },
         new object[] { "wa1",        "Web App",                         true  },
         new object[] { "wa2",        "Node.js api",                     true  },
         new object[] { "wa3",        "NodeJS api",                      true  },
@@ -136,4 +143,3 @@ public class DefaultTemplateTests
             "Either add the stencils to samples/template.tm7 or update the mapper.");
     }
 }
-

@@ -30,6 +30,20 @@ no .NET runtime required. Download the archive for your platform from the
 Each release also includes `checksums.txt` (SHA-256) and `release-metadata.json`
 for verification.
 
+Graphviz provides all automatic model layout and DOT import. Install it with
+`winget install Graphviz.Graphviz` on Windows, `brew install graphviz` on macOS,
+or your Linux package manager (for example, `apt install graphviz`). The CLI
+finds `dot` on `PATH` or in Graphviz's standard Windows install directory; use
+`TM7_GRAPHVIZ_DOT` or `--graphviz-dot <path>` to override it for DOT imports.
+
+> **Breaking changes from the initial preview**
+> - `add entity` no longer accepts manual `--left`, `--top`, `--width`, or
+>   `--height` options. Graphviz owns placement; use `--boundary` for
+>   containment.
+> - `add entity`, `add flow`, `remove`, `layout`, `render`, and `import dot`
+>   require Graphviz. Use `--no-layout` while constructing a batch.
+> - `new`, `open`, and `list` remain usable without Graphviz.
+
 > **Platform notes**
 > - **Linux** binaries are built against glibc 2.39 (Ubuntu 24.04), so they require
 >   a glibc-based distro of that vintage or newer (e.g. Ubuntu 24.04+, Debian 13+,
@@ -72,8 +86,7 @@ tm7 new mymodel.tm7 --name "My Threat Model"
 tm7 add entity mymodel.tm7 \
   --name "Web API" \
   --type-id SE.P.TMCore.AzureAppServiceWebApp \
-  --generic-type-id GE.P \
-  --left 400 --top 200
+  --generic-type-id GE.P
 
 # Add a data flow (use GUIDs from 'list entities')
 tm7 add flow mymodel.tm7 \
@@ -84,7 +97,7 @@ tm7 add flow mymodel.tm7 \
 # Render the diagram in terminal
 tm7 render mymodel.tm7
 
-# Import from Graphviz DOT (uses the bundled template by default)
+# Import from Graphviz DOT (Graphviz computes the node layout)
 tm7 import dot architecture.dot --output model.tm7
 
 # Show all usage examples
@@ -100,12 +113,53 @@ tm7 examples
 | `list flows <file>` | List all data flows with source/target |
 | `add entity <file>` | Add an entity (process, external interactor, data store, boundary) |
 | `add flow <file>` | Add a data flow between two entities |
+| `add surface <file>` | Add another drawing surface to the model |
 | `remove entity <file>` | Remove an entity and its connected flows |
 | `remove flow <file>` | Remove a data flow |
 | `new <file>` | Create an empty model from a template |
 | `import dot <dotfile>` | Import a Graphviz DOT file into tm7 format |
+| `layout <file>` | Apply Graphviz layout to an existing model |
 | `render <file>` | Render the diagram in the terminal |
 | `examples` | Show usage examples and entity type reference |
+
+Graphviz layout is automatic. Adding or removing an entity or flow immediately
+re-lays out every drawing surface, and `render` applies the same layout in
+memory. Entity coordinates are intentionally not accepted by `add entity`.
+Use `--boundary <guid>` to place an entity within a trust boundary. Run
+`tm7 layout model.tm7` once to update an existing manually positioned model.
+
+For batch construction, pass `--no-layout` to each `add entity` and `add flow`,
+then run `tm7 layout model.tm7` once after the topology is complete. Deferred
+adds use safe temporary geometry, avoiding failures caused by incomplete
+intermediate graphs. Use `tm7 add surface model.tm7 --name "Runtime"` together
+with `--surface <index>` to keep related subsystem diagrams in one model.
+
+`import dot` respects the DOT graph's `rankdir`; generated layouts default to
+left-to-right (`LR`). Graphviz coordinates are stored in the `.tm7` model so
+Microsoft Threat Modeling Tool and `tm7 render` use the same placement.
+Graphviz also selects obstacle-aware connector routes. The `.tm7` file stores
+the resulting source and target ports plus a bounded curve handle that
+approximates the route without producing extreme arcs. Parallel and reverse
+flows use separate lanes. Each endpoint is projected from the final curve
+handle onto the nearest point of the node perimeter, and its 8-way TM7 port is
+selected from the same direction so curves do not cross node labels. The
+terminal renderer uses the complete orthogonal Graphviz route. A global rank
+pass aligns connected trust-boundary clusters,
+reducing long fan-out crossings between hub and dependency groups. Large
+layouts are scaled into TM7's supported coordinate range before serialization
+so Microsoft Threat Modeling Tool does not auto-correct the model.
+Flow labels are represented as invisible Graphviz obstacles during layout, so
+their persisted handle positions do not overlap shapes, boundary captions, or
+other flow labels.
+
+Dense surfaces are evaluated in both left-to-right and top-to-bottom
+orientations. The CLI scores node and root-boundary overlap, compacts residual
+readable-width collisions, packs root clusters as units, and uniformly fits
+borders, labels, and routes together into the TM7 coordinate range. Flows are
+never dropped to make a layout fit.
+
+Existing line trust boundaries are mapped proportionally into the final entity
+coordinate frame so relayout does not leave their geometry behind.
 
 ## Entity types
 
@@ -121,6 +175,9 @@ tm7 examples
 The `render` command produces a Unicode diagram with ANSI color support:
 
 ![tm7 render output](docs/render-demo.png)
+
+The model shown above is available as [`samples/readme-demo.tm7`](samples/readme-demo.tm7);
+its editable Graphviz source is [`samples/demo.dot`](samples/demo.dot).
 
 - **Processes**: cyan rounded boxes (`╭╮╰╯`)
 - **External Interactors**: yellow sharp boxes (`┌┐└┘`)
